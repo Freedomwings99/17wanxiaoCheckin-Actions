@@ -1,13 +1,13 @@
 import time
 import os
-import smtplib
 import datetime
 import json
 import logging
 import requests
 
-from email.mime.text import MIMEText
-
+from utils.server_chan import server_push
+from utils.qq_email import qq_email_push
+from utils.qmsg import qmsg_push
 from login import CampusLogin
 
 
@@ -128,7 +128,7 @@ def get_post_json(post_json):
                 for i in data["cusTemplateRelations"]
             ],
             "checkbox": [
-                {"description": i["decription"], "value": i["value"]}
+                {"description": i["decription"], "value": i["value"], "propertyname": i["propertyname"]}
                 for i in data["cusTemplateRelations"]
             ],
         }
@@ -408,7 +408,7 @@ def campus_check_in(username, token, post_dict, id):
         res = requests.post(
             "https://reportedh5.17wanxiao.com/sass/api/epmpics", json=check_json
         ).json()
-
+        
         # 以json格式打印json字符串
         if res["code"] != "10000":
             logging.warning(res)
@@ -439,7 +439,7 @@ def check_in(username, password, device_id):
     
     # 登录获取token用于打卡
     token = get_token(username, password, device_id)
-
+    
     if not token:
         errmsg = f"{username[:4]}，获取token失败，打卡失败"
         logging.warning(errmsg)
@@ -449,7 +449,7 @@ def check_in(username, password, device_id):
     # print(token)
     # 获取现在是上午，还是下午，还是晚上
     # ape_list = get_ap()
-
+    
     # 获取学校使用打卡模板Id
     user_info = get_user_info(token)
     if not user_info:
@@ -457,7 +457,7 @@ def check_in(username, password, device_id):
         logging.warning(errmsg)
         check_dict_list.append({"status": 0, "errmsg": errmsg})
         return check_dict_list
-
+    
     # 获取第一类健康打卡的参数
     json1 = {
         "businessType": "epmpics",
@@ -465,11 +465,11 @@ def check_in(username, password, device_id):
         "method": "userComeApp",
     }
     post_dict = get_post_json(json1)
-
+    
     if post_dict:
         # 第一类健康打卡
         # print(post_dict)
-
+        
         # 修改温度等参数
         # for j in post_dict['updatainfo']:  # 这里获取打卡json字段的打卡信息，微信推送的json字段
         #     if j['propertyname'] == 'temperature':  # 找到propertyname为temperature的字段
@@ -482,7 +482,7 @@ def check_in(username, password, device_id):
         #         j['value'] = '无症状'
         #     if j['propertyname'] == 'ownbodyzk':
         #         j['value'] = '身体健康，无异常'
-
+        
         # 修改地址，依照自己完美校园，查一下地址即可
         # post_dict['areaStr'] = '{"streetNumber":"89号","street":"建设东路","district":"","city":"新乡市","province":"河南省",' \
         #                        '"town":"","pois":"河南师范大学(东区)","lng":113.91572178314209,' \
@@ -496,7 +496,7 @@ def check_in(username, password, device_id):
         # 第二类健康打卡
         healthy_check_dict = receive_check_in(token, user_info["customerId"], post_dict)
         check_dict_list.append(healthy_check_dict)
-
+    
     # # 获取校内打卡ID
     # id_list = get_id_list(token, user_info.get('customerAppTypeId'))
     # # print(id_list)
@@ -526,31 +526,63 @@ def check_in(username, password, device_id):
     return check_dict_list
 
 
-def server_push(sckey, desp):
-    """
-    Server酱推送：https://sc.ftqq.com/3.version
-    :param sckey: 通过官网注册获取，获取教程：https://github.com/ReaJason/17wanxiaoCheckin-Actions/blob/master/README_LAST.md#%E4%BA%8Cserver%E9%85%B1%E6%9C%8D%E5%8A%A1%E7%9A%84%E7%94%B3%E8%AF%B7
-    :param desp: 需要推送的内容
-    :return:
-    """
-    send_url = f"https://sc.ftqq.com/{sckey}.send"
-    params = {"text": "健康打卡推送通知", "desp": desp}
-    # 发送消息
-    for _ in range(3):
-        try:
-            res = requests.post(send_url, data=params)
-            if not res.json()["errno"]:
-                logging.info("Server酱推送服务成功")
-                break
+def wanxiao_server_push(sckey, check_info_list):
+    utc8_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    push_list = [f"""
+------
+#### 现在时间：
+```
+{utc8_time.strftime("%Y-%m-%d %H:%M:%S %p")}
+```"""]
+    for check_info in check_info_list:
+        if check_info["status"]:
+            if check_info["post_dict"].get("checkbox"):
+                post_msg = "\n".join(
+                    [
+                        f"| {i['description']} | {j['value']} |"
+                        for i in check_info["post_dict"].get("checkbox")
+                        for j in check_info["post_dict"].get("updatainfo")
+                        if i["propertyname"] == j["propertyname"]
+                    ]
+                )
             else:
-                logging.warning("Server酱推送服务失败")
-                break
-        except:
-            time.sleep(1)
-            logging.warning("Server酱不起作用了，可能是你的sckey出现了问题也可能服务器波动了，正在重试......")
+                post_msg = "暂无详情"
+            name = check_info["post_dict"].get("username")
+            if not name:
+                name = check_info["post_dict"]["name"]
+            push_list.append(
+                f"""#### {name}{check_info['type']}打卡信息：
+```
+{json.dumps(check_info['check_json'], sort_keys=True, indent=4, ensure_ascii=False)}
+```
+------
+| Text                           | Message |
+| :----------------------------------- | :--- |
+{post_msg}
+------
+```
+{check_info['res']}
+```"""
+            )
+        else:
+            push_list.append(
+                f"""------
+#### {check_info['errmsg']}
+------
+"""
+            )
+    push_list.append(
+        f"""
+>
+> [17wanxiaoCheckin-Actions](https://github.com/ReaJason/17wanxiaoCheckin-Actions)
+>
+>期待你给项目的star✨
+"""
+    )
+    return server_push(sckey, "健康打卡", "\n".join(push_list))
 
 
-def qq_mail_push(send_email, send_pwd, receive_email, check_info_list):
+def wanxiao_qq_mail_push(send_email, send_pwd, receive_email, check_info_list):
     bj_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
     bj_time.strftime("%Y-%m-%d %H:%M:%S %p")
     mail_msg_list = [f"""
@@ -559,7 +591,7 @@ def qq_mail_push(send_email, send_pwd, receive_email, check_info_list):
 <h2><center>期待你的Star✨</center></h2>
 <h3><center>打卡时间：{bj_time}</center></h3>
 """
-    ]
+                     ]
     for check in check_info_list:
         if check["status"]:
             name = check['post_dict'].get('username')
@@ -586,7 +618,7 @@ def qq_mail_push(send_email, send_pwd, receive_email, check_info_list):
 <th>Value</th>
 </tr>
 """
-            )
+                                 )
             for index, box in enumerate(check["post_dict"]["checkbox"]):
                 if index % 2:
                     mail_msg_list.append(
@@ -618,14 +650,14 @@ def qq_mail_push(send_email, send_pwd, receive_email, check_info_list):
   border-collapse:collapse;
   }
 
-#customers td, #customers th 
+#customers td, #customers th
   {
   font-size:1em;
   border:1px solid #98bf21;
   padding:3px 7px 2px 7px;
   }
 
-#customers th 
+#customers th
   {
   font-size:1.1em;
   text-align:left;
@@ -635,115 +667,59 @@ def qq_mail_push(send_email, send_pwd, receive_email, check_info_list):
   color:#ffffff;
   }
 
-#customers tr.alt td 
+#customers tr.alt td
   {
   color:#000000;
   background-color:#EAF2D3;
   }
 </style>"""
     mail_msg_list.append(css)
-    msg = MIMEText("".join(mail_msg_list), "html", "utf-8")
-    msg["From"] = send_email
-    msg["To"] = receive_email
-    msg["Subject"] = "完美校园健康打卡推送"
-    try:
-        with smtplib.SMTP_SSL("smtp.qq.com", 465) as server:
-            server.login(send_email, send_pwd)  # 括号中对应的是发件人邮箱账号、邮箱密码
-            server.sendmail(
-                send_email,
-                [
-                    receive_email,
-                ],
-                msg.as_string(),
-            )  # 括号中对应的是发件人邮箱账号、收件人邮箱账号、发送邮件
-            logging.info('qq邮箱推送成功')
+    return qq_email_push(send_email, send_pwd, receive_email,
+                         title="完美校园健康打卡", text="".join(mail_msg_list))
 
-    except Exception as e:
-        logging.warning(f'qq邮箱推送失败：{e}')
+
+def wanxiao_qmsg_push(key, qq_num, check_info_list, send_type):
+    utc8_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    push_list = [f'@face=74@ {utc8_time.strftime("%Y-%m-%d %H:%M:%S")} @face=74@ ']
+    for check_info in check_info_list:
+        if check_info["status"]:
+            name = check_info["post_dict"].get("username")
+            if not name:
+                name = check_info["post_dict"]["name"]
+            push_list.append(f"""\
+@face=54@ {name}{check_info['type']} @face=54@
+@face=211@
+{check_info['res']}
+@face=211@""")
+        else:
+            push_list.append(check_info['errmsg'])
+    return qmsg_push(key, qq_num, "\n".join(push_list), send_type)
 
 
 def main_handler(*args, **kwargs):
     initLogging()
-    bj_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-    log_info = [
-        f"""
-------
-#### 现在时间：
-```
-{bj_time.strftime("%Y-%m-%d %H:%M:%S %p")}
-```"""]
     raw_info = []
     username_list = os.environ['USERNAME'].split(',')
     password_list = os.environ['PASSWORD'].split(',')
     device_id_list = os.environ['DEVICEID'].split(',')
-    sckey = os.environ['SCKEY']
+    sckey = os.environ.get('SCKEY')
+    key = os.environ.get('KEY')
+    qq_num = os.environ.get('QQ_NUM')
     send_email = os.environ.get('SEND_EMAIL')
     send_pwd = os.environ.get('SEND_PWD')
     receive_email = os.environ.get('RECEIVE_EMAIL')
     for username, password, device_id in zip(
             [i.strip() for i in username_list if i != ''],
             [i.strip() for i in password_list if i != ''],
-            [i.strip() for i in device_id_list if i != ''],
-                                             ):
+            [i.strip() for i in device_id_list if i != '']):
         check_dict = check_in(username, password, device_id)
         raw_info.extend(check_dict)
-        if not check_dict:
-            return
-        else:
-            for check in check_dict:
-                if check["status"]:
-                    if check["post_dict"].get("checkbox"):
-                        post_msg = "\n".join(
-                            [
-                                f"| {i['description']} | {i['value']} |"
-                                for i in check["post_dict"].get("checkbox")
-                            ]
-                        )
-                    else:
-                        post_msg = "暂无详情"
-                    name = check['post_dict'].get('username')
-                    if not name:
-                        name = check['post_dict']['name']
-                    log_info.append(
-                        f"""#### {name}{check['type']}打卡信息：
-```
-{json.dumps(check['check_json'], sort_keys=True, indent=4, ensure_ascii=False)}
-```
-
-------
-| Text                           | Message |
-| :----------------------------------- | :--- |
-{post_msg}
-------
-```
-{check['res']}
-```"""
-                    )
-                    # log_info.append(
-                    #     f"""
-# ```
-# {json.dumps(check['post_dict']['updatainfo_detail'], sort_keys=True, indent=4, ensure_ascii=False)}
-# ```"""
-#                     )
-                else:
-                    log_info.append(
-                        f"""------
-#### {check['errmsg']}
-------
-"""
-                    )
-    log_info.append(
-        f"""
->
-> [17wanxiaoCheckin-Actions](https://github.com/ReaJason/17wanxiaoCheckin-Actions)
->
->期待你给项目的star✨
-"""
-    )
     if sckey:
-        server_push(sckey, "\n".join(log_info))
+        logging.info(wanxiao_server_push(sckey, raw_info))
     if send_email and send_pwd and receive_email:
-        qq_mail_push(send_email, send_pwd, receive_email, raw_info)
+        logging.info(wanxiao_qq_mail_push(send_email, send_pwd, receive_email, raw_info))
+    if key:
+        logging.info(wanxiao_qmsg_push(key, qq_num, raw_info, send_type="send"))
 
 
 if __name__ == "__main__":
