@@ -1,12 +1,12 @@
 name: 17wanxiaoCheckin
 
-# on:
-#   push:
-#    branches: [ master ]
-#   pull_request:
-#    branches: [ master ]
-#   schedule:
-#    - cron: 0 22 * * *
+on:
+   push:
+    branches: [ master ]
+   pull_request:
+    branches: [ master ]
+   schedule:
+    - cron: 0 22 * * *
 
 jobs:
   build:
@@ -23,6 +23,7 @@ jobs:
       env:
         USERNAME: ${{secrets.USERNAME}}
         PASSWORD: ${{secrets.PASSWORD}}
+        DEVICEID: ${{secrets.DEVICEID}}
         SCKEY: ${{secrets.SCKEY}}
         SEND_EMAIL: ${{secrets.SEND_EMAIL}}
         SEND_PWD: ${{secrets.SEND_PWD}}

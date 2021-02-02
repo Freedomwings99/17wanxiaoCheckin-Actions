@@ -8,7 +8,7 @@ import requests
 
 from email.mime.text import MIMEText
 
-from login import CampusCard
+from login import CampusLogin
 
 
 def initLogging():
@@ -16,23 +16,33 @@ def initLogging():
     logging.basicConfig(format="[%(levelname)s]; %(message)s")
 
 
-def get_token(username, password):
+def get_token(username, password, device_id):
     """
     获取用户令牌，模拟登录获取：https://github.com/zhongbr/wanmei_campus
+    :param device_id: 设备ID
     :param username: 账号
     :param password: 密码
     :return:
     """
-    for _ in range(10):
-        user_dict = CampusCard(username, password).user_info
-        if user_dict["login"]:
-            return user_dict["sessionId"]
-        elif user_dict['login_msg']['message_'] == "该手机号未注册完美校园":
+    for _ in range(3):
+        try:
+            campus_login = CampusLogin(phone_num=username, device_id=device_id)
+        except Exception as e:
+            logging.warning(e)
+            continue
+        login_dict = campus_login.pwd_login(password)
+        if login_dict["status"]:
+            logging.info(f"{username[:4]}，{login_dict['msg']}")
+            return login_dict["token"]
+        elif login_dict['errmsg'] == "该手机号未注册完美校园":
+            logging.warning(f"{username[:4]}，{login_dict['errmsg']}")
             return None
-        elif user_dict['login_msg']['message_'].startswith("密码错误"):
+        elif login_dict['errmsg'].startswith("密码错误"):
+            logging.warning(f"{username[:4]}，{login_dict['errmsg']}")
             logging.warning("代码是死的，密码错误了就是错误了，赶紧去查看一下是不是输错了!")
             return None
         else:
+            logging.info(f"{username[:4]}，{login_dict['errmsg']}")
             logging.warning('正在尝试重新登录......')
             time.sleep(5)
     return None
@@ -424,16 +434,18 @@ def campus_check_in(username, token, post_dict, id):
         return dict(status=0, errmsg=errmsg)
 
 
-def check_in(username, password):
+def check_in(username, password, device_id):
     check_dict_list = []
+    
     # 登录获取token用于打卡
-    token = get_token(username, password)
+    token = get_token(username, password, device_id)
 
     if not token:
         errmsg = f"{username[:4]}，获取token失败，打卡失败"
         logging.warning(errmsg)
         check_dict_list.append({"status": 0, "errmsg": errmsg})
         return check_dict_list
+    
     # print(token)
     # 获取现在是上午，还是下午，还是晚上
     # ape_list = get_ap()
@@ -663,13 +675,17 @@ def main_handler(*args, **kwargs):
     raw_info = []
     username_list = os.environ['USERNAME'].split(',')
     password_list = os.environ['PASSWORD'].split(',')
+    device_id_list = os.environ['DEVICEID'].split(',')
     sckey = os.environ['SCKEY']
     send_email = os.environ.get('SEND_EMAIL')
     send_pwd = os.environ.get('SEND_PWD')
     receive_email = os.environ.get('RECEIVE_EMAIL')
-    for username, password in zip([i.strip() for i in username_list if i != ''],
-                                  [i.strip() for i in password_list if i != '']):
-        check_dict = check_in(username, password)
+    for username, password, device_id in zip(
+            [i.strip() for i in username_list if i != ''],
+            [i.strip() for i in password_list if i != ''],
+            [i.strip() for i in device_id_list if i != ''],
+                                             ):
+        check_dict = check_in(username, password, device_id)
         raw_info.extend(check_dict)
         if not check_dict:
             return
