@@ -42,7 +42,7 @@
    - `上午六点多`：健康打卡
 4. 微信推送打卡消息
 
-## 💢使用方法（已修复） —— 也可使用 [腾讯云函数](https://github.com/ReaJason/17wanxiaoCheckin-Actions/blob/master/17wanxiaoCheckin-SCF.md)
+## 💢使用方法（已失效） —— 可使用 [腾讯云函数](https://github.com/ReaJason/17wanxiaoCheckin-Actions/blob/master/17wanxiaoCheckin-SCF.md)
 
 1. 请先确保在**完美校园 APP**中进入健康打卡界面，信息能够正确的自动填写，并手动打一次卡（只能是 app，小程序不行！）（没有自动填写的项，可以自行修改代码）
 
