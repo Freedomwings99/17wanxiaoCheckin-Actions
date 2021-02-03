@@ -1,192 +1,223 @@
-import random
+# 文件名：campus.py
+# 创建日期：2020年09月13日09点44分
+# 作者：Zhongbr
+# 邮箱：zhongbr@icloud.com
+"""
+修改：ReaJason
+修改日期：2021年2月1日
+邮箱：reajason@163.com
+博客：https://reajason.top
+ChangeLog:
+1、优化原作者写的账密登录方式和接口替换（server.17wanxiao.com -> app.17wanxiao.com）
+2、增加短信登录方式
+"""
 import json
 import hashlib
 import requests
 import urllib3
-import logging
 
 from login import des_3
 from login import rsa_encrypt as rsa
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-class CampusCard:
-    """
-    完美校园APP
-    初始化时需要传入手机号码、密码、用户信息（如果有）
-    """
-    data = None
 
-    def __init__(self, phone, password, user_info=(None, '{}.info')):
-        """
-        初始化一卡通类
-        :param phone: 完美校园账号
-        :param password: 完美校园密码
-        :param user_info: 已登录的虚拟设备
-        """
-        self.user_info = user_info[0] if user_info[0] else self.__create_blank_user__()
-        if self.user_info['exchangeFlag']:
-            self.exchange_secret()
-            self.login(phone, password)
+class CampusLogin:
+    __slots__ = ['login_info']
 
-    @staticmethod
-    def __create_blank_user__():
+    def __init__(self, phone_num, device_id, app_version=10535102,
+                 user_agent="Dalvik/2.1.0 (Linux; U; Android 6.0.1; MuMu Build/V417IR)",
+                 phone_code="raphael", sys_type="android", sys_version="6.0.1", phone_model="MuMu"
+                 ):
         """
-        当传入的已登录设备信息不可用时，虚拟一个空的未登录设备
-        :return: 空设备信息
+        初始化CampusLogin对象并交换密钥
+        :param phone_num: 完美校园登录账号（手机号）
+        :param device_id: 设备ID，模拟器IMEI或其他方式获取的可用于完美校园登录的ID
+        :param app_version: 完美校园app版本
+        :param user_agent: 账密登录时所用的用户代理
+        :param phone_code: 手机代号
+        :param sys_type: 系统类型，android，ipad，iphone
+        :param sys_version: 系统版本
+        :param phone_model: 手机机型
         """
-        rsa_keys = rsa.create_key_pair(1024)
-        return {
-            'appKey': '',
-            'sessionId': '',
-            'exchangeFlag': True,
-            'login': False,
-            'serverPublicKey': '',
-            'deviceId': str(random.randint(999999999999999, 9999999999999999)),
-            'wanxiaoVersion': 10462101,
-            'rsaKey': {
-                'private': rsa_keys[1],
-                'public': rsa_keys[0]
-            }
+        self.login_info = {
+            "phoneNum": phone_num,
+            "deviceId": device_id,
+            "appKey": "",
+            "sessionId": "",
+            "wanxiaoVersion": app_version,
+            "userAgent": user_agent,
+            "shebeixinghao": phone_code,
+            "systemType": sys_type,
+            "telephoneInfo": sys_version,
+            "telephoneModel": phone_model
         }
-
+        self.exchange_secret()
+    
     def exchange_secret(self):
         """
-        与完美校园服务器交换RSA加密的公钥，并取得sessionId
-        :return:
+        交换密钥
+        :return: if fail, raise error
         """
-        resp = requests.post(
-            "https://server.17wanxiao.com/campus/cam_iface46/exchangeSecretkey.action",
-            headers={
-                "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 5.1.1; HUAWEI MLA-AL10 Build/HUAWEIMLA-AL10)",
-            },
-            json={
-                "key": self.user_info["rsaKey"]["public"]
-            },
-            verify=False
-        )
-        session_info = json.loads(
-            rsa.rsa_decrypt(resp.text.encode(resp.apparent_encoding), self.user_info["rsaKey"]["private"])
-        )
-        self.user_info["sessionId"] = session_info["session"]
-        self.user_info["appKey"] = session_info["key"][:24]
+        rsa_keys = rsa.create_key_pair(1024)
+        try:
+            resp = requests.post(
+                'https://app.17wanxiao.com/campus/cam_iface46/exchangeSecretkey.action',
+                headers={'User-Agent': self.login_info['userAgent']},
+                json={'key': rsa_keys[0]},
+                verify=False,
+                timeout=30
+            )
+            session_info = json.loads(rsa.rsa_decrypt(resp.text.encode(resp.apparent_encoding), rsa_keys[1]))
+            self.login_info['sessionId'] = session_info['session']
+            self.login_info['appKey'] = session_info['key'][:24]
+        except Exception as e:
+            raise e.__class__("完美校园交换密钥失败", e)
 
-    def login(self, phone, password):
+    def pwd_login(self, password):
         """
-        使用账号密码登录完美校园APP
-        :param phone: 完美校园APP绑定的手机号码
-        :param password: 完美校园密码
-        :return:
+        完美校园密码登录
+        :param password: 完美校园登录密码
+        :return: dict
+        if success：return {
+                        "status": 1,
+                        "token": token,
+                        "msg": msg
+                    }
+        if fail：return {
+                     "status": 0,
+                     "errmsg": errmsg
+                 }
         """
-        password_list = []
-        for i in password:
-            password_list.append(des_3.des_3_encrypt(i, self.user_info["appKey"], "66666666"))
+        password_list = [des_3.des_3_encrypt(i, self.login_info['appKey'], '66666666') for i in password]
         login_args = {
-            "appCode": "M002",
-            "deviceId": self.user_info["deviceId"],
-            "netWork": "wifi",
-            "password": password_list,
-            "qudao": "guanwang",
-            "requestMethod": "cam_iface46/loginnew.action",
-            "shebeixinghao": "MLA-AL10",
-            "systemType": "android",
-            "telephoneInfo": "5.1.1",
-            "telephoneModel": "HUAWEI MLA-AL10",
-            "type": "1",
-            "userName": phone,
-            "wanxiaoVersion": 10462101,
-            "yunyingshang": "07"
+            'appCode': 'M002',
+            'deviceId': self.login_info['deviceId'],
+            'netWork': 'wifi',
+            'password': password_list,
+            'qudao': 'guanwang',
+            'requestMethod': 'cam_iface46/loginnew.action',
+            'shebeixinghao': self.login_info['shebeixinghao'],
+            'systemType': self.login_info['systemType'],
+            'telephoneInfo': self.login_info['telephoneInfo'],
+            'telephoneModel': self.login_info['telephoneModel'],
+            'type': '1',
+            'userName': self.login_info['phoneNum'],
+            'wanxiaoVersion': self.login_info['wanxiaoVersion'],
+            'yunyingshang': '07'
         }
         upload_args = {
-            "session": self.user_info["sessionId"],
-            "data": des_3.object_encrypt(login_args, self.user_info["appKey"])
+            'session': self.login_info['sessionId'],
+            'data': des_3.object_encrypt(login_args, self.login_info['appKey'])
         }
-        resp = requests.post(
-            "https://server.17wanxiao.com/campus/cam_iface46/loginnew.action",
-            headers={"campusSign": hashlib.sha256(json.dumps(upload_args).encode('utf-8')).hexdigest()},
-            json=upload_args,
-            verify=False
-        ).json()
-        if resp["result_"]:
-            logging.info(f"{phone[:4]}：{resp['message_']}")
-            self.data = resp["data"]
-            self.user_info["login"] = True
-            self.user_info["exchangeFlag"] = False
-        else:
-            logging.info(f"{phone[:4]}：{resp['message_']}")
-        return resp["result_"]
-
-    def get_bill(self, from_date, end_date):
+        try:
+            resp = requests.post(
+                'https://app.17wanxiao.com/campus/cam_iface46/loginnew.action',
+                headers={'campusSign': hashlib.sha256(json.dumps(upload_args).encode('utf-8')).hexdigest()},
+                json=upload_args,
+                verify=False,
+                timeout=30,
+            ).json()
+            """
+            {'result_': True, 'data': '........', 'message_': '登录成功', 'code_': '0'}
+            {'result_': False, 'message_': '该手机号未注册完美校园', 'code_': '4'}
+            {'result_': False, 'message_': '您正在新设备上使用完美校园，请使用验证码进行验证登录', 'code_': '5'}
+            {'result_': False, 'message_': '密码错误,您还有5次机会!', 'code_': '5'}
+            """
+            if resp['result_']:
+                return {"status": 1, "token": self.login_info['sessionId'], "msg": resp['message_']}
+            return {"status": 0, "errmsg": resp['message_']}
+        except Exception as e:
+            return {"status": 0, "errmsg": f"{e.__class__}，{e}"}
+    
+    def send_sms(self):
         """
-        获取指定日期范围内的校园卡消费记录
-        :param from_date: 查询开始日期
-        :param end_date: 查询结束日期
-        :return: 查询结果
+        发送短信
+        :return: dict
+        if success：return {
+                        "status": 1,
+                        "msg": msg
+                    }
+        if fail：return {
+                     "status": 0,
+                     "errmsg": errmsg
+                 }
         """
-        resp = requests.post(
-            "http://server.17wanxiao.com/YKT_Interface/xyk",
-            headers={
-                "Referer": "http://server.17wanxiao.com/YKT_Interface/v2/index.html"
-                           "?utm_source=app"
-                           "&utm_medium=plugin"
-                           "&UAinfo=wanxiao"
-                           "&versioncode={args[wanxiaoVersion]}"
-                           "&customerId=504"
-                           "&systemType=Android"
-                           "&token={args[sessionId]}".format(args=self.user_info),
-                "Origin": "http://server.17wanxiao.com",
-                "User-Agent": "Mozilla/5.0 (Linux; Android 5.1.1; HUAWEI MLA-AL10 Build/HUAWEIMLA-AL10; wv) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile "
-                              "Safari/537.36 Wanxiao/4.6.2",
-            },
-            data={
-                "token": self.user_info["sessionId"],
-                "method": "XYK_TRADE_DETAIL",
-                "param": '{"beginDate":"' + from_date + '","endDate":"' + end_date + '","beginIndex":0,"count":20}'
-            },
-            verify=False
-        ).json()
-        return json.loads(resp["body"])
-
-    def get_main_info(self):
-        resp = requests.post(
-            "https://server.17wanxiao.com/YKT_Interface/xyk",
-            headers={
-                "Referer": "https://server.17wanxiao.com/YKT_Interface/v2/index.html"
-                           "?utm_source=app"
-                           "&utm_medium=card"
-                           "&UAinfo=wanxiao"
-                           "&versioncode={args[wanxiaoVersion]}"
-                           "&customerId=504"
-                           "&systemType=Android"
-                           "&token={args[sessionId]}".format(args=self.user_info),
-                "Origin": "https://server.17wanxiao.com",
-                "User-Agent": "Mozilla/5.0 (Linux; Android 5.1.1; HUAWEI MLA-AL10 Build/HUAWEIMLA-AL10; wv) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile "
-                              "Safari/537.36 Wanxiao/4.6.2",
-            },
-            data={
-                "token": self.user_info["sessionId"],
-                "method": "XYK_BASE_INFO",
-                "param": "{}"
-            },
-            verify=False
-        ).json()
-        return json.loads(resp["body"])
-
-    def save_user_info(self):
+        send = {
+            'action': "registAndLogin",
+            'deviceId': self.login_info['deviceId'],
+            'mobile': self.login_info['phoneNum'],
+            'requestMethod': "cam_iface46/gainMatrixCaptcha.action",
+            'type': "sms"
+        }
+        upload_args = {
+            "session": self.login_info["sessionId"],
+            "data": des_3.object_encrypt(send, self.login_info["appKey"])
+        }
+        try:
+            resp = requests.post(
+                "https://app.17wanxiao.com/campus/cam_iface46/gainMatrixCaptcha.action",
+                headers={"campusSign": hashlib.sha256(json.dumps(upload_args).encode('utf-8')).hexdigest()},
+                json=upload_args,
+                verify=False,
+                timeout=30
+            ).json()
+            """
+            {"result_":true,"message_":"聚合验证码发送成功。","code_":0}
+            """
+            if resp['result_']:
+                return {"status": 1, "msg": resp['message_']}
+            return {"status": 0, "errmsg": f"短信发送失败，{resp}"}
+        except Exception as e:
+            return {"status": 0, "errmsg": f"{e.__class__}，{e}"}
+            
+    def sms_login(self, sms):
         """
-        保存当前的设备信息
-        :return: 当前设备信息的json字符串
+        短信登录
+        :param sms: 收到的验证码
+        :return: dict
+        if success：return {
+                        "status": 1,
+                        "token": token,
+                        "msg": msg
+                    }
+        if fail：return {
+                     "status": 0,
+                     "errmsg": errmsg
+                 }
         """
-        return json.dumps(self.user_info)
-
-
-def open_device(f):
-    try:
-        device_file = open(f, "r")
-        device = json.loads(device_file.read())
-        device_file.close()
-    except:
-        device = None
-    return device, f
+        data = {
+            'appCode': "M002",
+            'deviceId': self.login_info['deviceId'],
+            'netWork': "wifi",
+            'qudao': "guanwang",
+            'requestMethod': "cam_iface46/registerUsersByTelAndLoginNew.action",
+            'shebeixinghao': "iPadPro",
+            'sms': sms,
+            'systemType': self.login_info['systemType'],
+            'telephoneInfo': self.login_info['telephoneInfo'],
+            'telephoneModel': self.login_info['telephoneModel'],
+            'mobile': self.login_info['phoneNum'],
+            'wanxiaoVersion': self.login_info['wanxiaoVersion']
+        }
+        upload_args = {
+            "session": self.login_info["sessionId"],
+            "data": des_3.object_encrypt(data, self.login_info["appKey"])
+        }
+        try:
+            resp = requests.post(
+                "https://app.17wanxiao.com/campus/cam_iface46/registerUsersByTelAndLoginNew.action",
+                headers={"campusSign": hashlib.sha256(json.dumps(upload_args).encode('utf-8')).hexdigest()},
+                json=upload_args,
+                verify=False,
+                timeout=30
+            ).json()
+            """
+            {"result_":true,"data":"******","message_":"登录成功","code_":"0"}
+            {"result_":false,"message_":"短信验证码错误","code_":"6"}
+            """
+            if resp['result_']:
+                return {"status": 1, "token": self.login_info['sessionId'], "msg": resp['message_']}
+            return {"status": 0, "errmsg": resp['message_']}
+        except Exception as e:
+            return {"status": 0, "errmsg": f"{e.__class__}，{e}"}
