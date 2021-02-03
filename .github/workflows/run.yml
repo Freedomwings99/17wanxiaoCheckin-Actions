@@ -25,6 +25,8 @@ jobs:
         PASSWORD: ${{secrets.PASSWORD}}
         DEVICEID: ${{secrets.DEVICEID}}
         SCKEY: ${{secrets.SCKEY}}
+        KEY: ${{secrets.KEY}}
+        QQ_NUM: ${{secrets.QQ_NUM}}
         SEND_EMAIL: ${{secrets.SEND_EMAIL}}
         SEND_PWD: ${{secrets.SEND_PWD}}
         RECEIVE_EMAIL: ${{secrets.RECEIVE_EMAIL}}
